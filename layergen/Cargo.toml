@@ -1,0 +1,13 @@
+[package]
+name = "layergen"
+version = "0.1.0"
+authors = ["2xsaiko <git@dblsaiko.net>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = "3.0.0-beta.1"
+serde = { version = "1.0.115", features = ["derive"] }
+serde_yaml = "0.8.13"
+image = { version = "0.23.9", default_features = false, features = ["png"] }
