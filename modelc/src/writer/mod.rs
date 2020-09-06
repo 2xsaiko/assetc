@@ -1,14 +1,98 @@
+use std::collections::HashSet;
 use std::io;
 use std::io::Write;
 
 use byteorder::{LittleEndian, WriteBytesExt};
 
+use crate::ident::Identifier;
+use crate::model::Model;
+use crate::types::{DisplayTransformation, Vec2, Vec3};
+
 const VERSION: u16 = 1;
 
-pub fn write(target: &mut impl Write) -> io::Result<()> {
+pub fn write<T: Write>(model: &Model, mut target: T) -> io::Result<()> {
     // file header
     write!(target, "MCBM")?;
     target.write_u16::<LittleEndian>(VERSION)?;
+
+    // identifier lookup table
+    let mut identifiers = HashSet::new();
+    identifiers.insert(&model.particle);
+    for x in &model.meshes {
+        for y in &x.quads {
+            identifiers.insert(&y.texture);
+        }
+    }
+    let mut identifiers: Vec<_> = identifiers.into_iter().collect();
+    identifiers.sort();
+
+    assert!(identifiers.len() <= u16::MAX as usize);
+    target.write_u16::<LittleEndian>(identifiers.len() as u16)?;
+    for &x in identifiers.iter() {
+        write_identifier(&mut target, x)?;
+    }
+
+    // write transformations
+    write_transformation(&mut target, &model.transformation.thirdperson_righthand)?;
+    write_transformation(&mut target, &model.transformation.thirdperson_lefthand)?;
+    write_transformation(&mut target, &model.transformation.firstperson_righthand)?;
+    write_transformation(&mut target, &model.transformation.firstperson_lefthand)?;
+    write_transformation(&mut target, &model.transformation.gui)?;
+    write_transformation(&mut target, &model.transformation.head)?;
+    write_transformation(&mut target, &model.transformation.ground)?;
+    write_transformation(&mut target, &model.transformation.fixed)?;
+
+    // write meshes
+    assert!(model.meshes.len() <= u16::MAX as usize);
+    target.write_u16::<LittleEndian>(model.meshes.len() as u16)?;
+    for mesh in model.meshes.iter() {
+        assert!(mesh.quads.len() <= u16::MAX as usize);
+        target.write_u16::<LittleEndian>(mesh.quads.len() as u16)?;
+        for quad in mesh.quads.iter() {
+            target.write_u16::<LittleEndian>(identifiers.binary_search(&&quad.texture).unwrap() as u16)?;
+            for x in quad.vertices.iter() {
+                write_vec3(&mut target, x.xyz)?;
+                write_vec2(&mut target, x.uv)?;
+            }
+            write_vec3(&mut target, quad.normal)?;
+            target.write_i32::<LittleEndian>(quad.color_index)?;
+            target.write_u8(quad.cull_face.map(|d| d.index() as u8).unwrap_or(0xFF))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn write_transformation<T: Write>(mut target: T, t: &DisplayTransformation) -> io::Result<()> {
+    write_vec3(&mut target, t.rotation)?;
+    write_vec3(&mut target, t.translation)?;
+    write_vec3(&mut target, t.scale)?;
+    Ok(())
+}
+
+fn write_vec3<T: Write>(mut target: T, vec: Vec3) -> io::Result<()> {
+    target.write_f32::<LittleEndian>(vec[0])?;
+    target.write_f32::<LittleEndian>(vec[1])?;
+    target.write_f32::<LittleEndian>(vec[2])?;
+    Ok(())
+}
+
+fn write_vec2<T: Write>(mut target: T, vec: Vec2) -> io::Result<()> {
+    target.write_f32::<LittleEndian>(vec[0])?;
+    target.write_f32::<LittleEndian>(vec[1])?;
+    Ok(())
+}
+
+fn write_identifier<T: Write>(mut target: T, identifier: &Identifier) -> io::Result<()> {
+    assert!(identifier.namespace.len() <= u16::MAX as usize);
+    assert!(identifier.path.len() <= u16::MAX as usize);
+    let namespace_len = if identifier.namespace == "minecraft" { u16::MAX } else { identifier.namespace.len() as u16 };
+    target.write_u16::<LittleEndian>(namespace_len)?;
+    target.write_u16::<LittleEndian>(identifier.path.len() as u16)?;
+    if identifier.namespace != "minecraft" {
+        write!(target, "{}", identifier.namespace)?;
+    }
+    write!(target, "{}", identifier.path)?;
 
     Ok(())
 }

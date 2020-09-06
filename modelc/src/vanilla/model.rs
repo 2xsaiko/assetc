@@ -6,17 +6,38 @@ use serde::de::Error;
 use crate::ident::Identifier;
 use crate::types::{Direction, DisplayTransformation, Vec3};
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Model {
-    pub parent: Identifier,
-    #[serde(default = "ao_default")]
-    pub ambientocclusion: bool,
+    pub parent: Option<Identifier>,
+    pub ambientocclusion: Option<bool>,
     #[serde(default)]
     pub display: Display,
     #[serde(default)]
     pub textures: HashMap<String, TextureRef>,
-    #[serde(default)]
-    pub elements: Vec<Cube>,
+    pub elements: Option<Vec<Cube>>,
+}
+
+impl Model {
+    pub fn merge(mut self, mut parent: Model) -> Model {
+        self.parent = parent.parent;
+        self.ambientocclusion = self.ambientocclusion.or(parent.ambientocclusion);
+        self.display = self.display.merge(parent.display);
+        parent.textures.extend(self.textures);
+        self.textures = parent.textures;
+        self.elements = self.elements.or(parent.elements);
+
+        self
+    }
+
+    pub fn ambientocclusion(&self) -> bool { self.ambientocclusion.unwrap_or(true) }
+
+    pub fn elements(&self) -> &[Cube] { self.elements.as_ref().map(|a| &**a).unwrap_or(&[]) }
+
+    pub fn texture(&self, name: &str) -> Option<Identifier> {
+        self.textures.get(name).and_then(|e| e.clone().resolve(&self.textures).literal())
+    }
+
+    pub fn is_fully_resolved(&self) -> bool { self.parent.is_none() }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -33,6 +54,13 @@ impl TextureRef {
         }
     }
 
+    pub fn literal(self) -> Option<Identifier> {
+        match self {
+            TextureRef::Literal(id) => Some(id),
+            TextureRef::Reference(_) => None,
+        }
+    }
+
     pub fn unwrap(self) -> Identifier {
         match self {
             TextureRef::Literal(id) => id,
@@ -41,7 +69,7 @@ impl TextureRef {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Cube {
     pub from: Vec3,
     pub to: Vec3,
@@ -51,7 +79,7 @@ pub struct Cube {
     pub faces: Faces,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Rotation {
     pub origin: Vec3,
     pub axis: RotationAxis,
@@ -60,7 +88,7 @@ pub struct Rotation {
     pub rescale: bool,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct Display {
     pub thirdperson_righthand: Option<DisplayTransformation>,
     pub thirdperson_lefthand: Option<DisplayTransformation>,
@@ -73,27 +101,33 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn merge(self, overrides: Display) -> Display {
+    pub fn merge(self, parent: Display) -> Display {
         Display {
-            thirdperson_righthand: overrides.thirdperson_righthand.or(self.thirdperson_righthand),
-            thirdperson_lefthand: overrides.thirdperson_lefthand.or(self.thirdperson_lefthand),
-            firstperson_righthand: overrides.firstperson_righthand.or(self.firstperson_righthand),
-            firstperson_lefthand: overrides.firstperson_lefthand.or(self.firstperson_lefthand),
-            gui: overrides.gui.or(self.gui),
-            head: overrides.head.or(self.head),
-            ground: overrides.ground.or(self.ground),
-            fixed: overrides.fixed.or(self.fixed),
+            thirdperson_righthand: self.thirdperson_righthand.or(parent.thirdperson_righthand),
+            thirdperson_lefthand: self.thirdperson_lefthand.or(parent.thirdperson_lefthand),
+            firstperson_righthand: self.firstperson_righthand.or(parent.firstperson_righthand),
+            firstperson_lefthand: self.firstperson_lefthand.or(parent.firstperson_lefthand),
+            gui: self.gui.or(parent.gui),
+            head: self.head.or(parent.head),
+            ground: self.ground.or(parent.ground),
+            fixed: self.fixed.or(parent.fixed),
         }
     }
 }
 
 impl From<Display> for crate::types::Display {
     fn from(d: Display) -> Self {
+        // TODO apply transformations for left hand
+        let thirdperson_righthand = d.thirdperson_righthand.unwrap_or_default();
+        let thirdperson_lefthand = d.thirdperson_lefthand.unwrap_or(thirdperson_righthand);
+        let firstperson_righthand = d.firstperson_righthand.unwrap_or_default();
+        let firstperson_lefthand = d.firstperson_lefthand.unwrap_or(firstperson_righthand);
+
         crate::types::Display {
-            thirdperson_righthand: d.thirdperson_righthand.unwrap_or_default(),
-            thirdperson_lefthand: d.thirdperson_lefthand.unwrap_or_default(),
-            firstperson_righthand: d.firstperson_righthand.unwrap_or_default(),
-            firstperson_lefthand: d.firstperson_lefthand.unwrap_or_default(),
+            thirdperson_righthand,
+            thirdperson_lefthand,
+            firstperson_righthand,
+            firstperson_lefthand,
             gui: d.gui.unwrap_or_default(),
             head: d.head.unwrap_or_default(),
             ground: d.ground.unwrap_or_default(),
@@ -102,7 +136,7 @@ impl From<Display> for crate::types::Display {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Faces {
     pub down: Option<Face>,
     pub up: Option<Face>,
@@ -112,7 +146,27 @@ pub struct Faces {
     pub east: Option<Face>,
 }
 
-#[derive(Debug, Deserialize)]
+impl Faces {
+    pub fn iter(&self) -> FaceIter {
+        FaceIter {
+            inner: &self,
+            next_dir: Some(Direction::Down),
+        }
+    }
+
+    pub fn get_face(&self, d: Direction) -> Option<&Face> {
+        match d {
+            Direction::Down => self.down.as_ref(),
+            Direction::Up => self.up.as_ref(),
+            Direction::North => self.north.as_ref(),
+            Direction::South => self.south.as_ref(),
+            Direction::West => self.west.as_ref(),
+            Direction::East => self.east.as_ref(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct Face {
     pub uv: Option<[f32; 4]>,
     pub texture: TextureRef,
@@ -122,7 +176,32 @@ pub struct Face {
     pub tintindex: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
+impl Face {
+    pub fn tintindex(&self) -> i32 { self.tintindex.unwrap_or(-1) }
+}
+
+pub struct FaceIter<'a> {
+    inner: &'a Faces,
+    next_dir: Option<Direction>,
+}
+
+impl<'a> Iterator for FaceIter<'a> {
+    type Item = (Direction, &'a Face);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(d) = self.next_dir {
+            self.next_dir = if d == Direction::East { None } else { Some(d.cycle()) };
+
+            match self.inner.get_face(d) {
+                None => {},
+                Some(f) => return Some((d, f)),
+            }
+        }
+        None
+    }
+}
+
+#[derive(Copy, Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RotationAxis { X, Y, Z }
 
@@ -138,7 +217,5 @@ impl<'de> Deserialize<'de> for TextureRef {
         }
     }
 }
-
-fn ao_default() -> bool { true }
 
 fn shade_default() -> bool { true }

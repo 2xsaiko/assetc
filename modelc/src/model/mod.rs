@@ -1,36 +1,35 @@
-use std::collections::HashMap;
-
 use crate::ident::Identifier;
 use crate::types::{Direction, Display, Vec2, Vec3};
 use crate::vanilla::BlockStateDef;
 use crate::vanilla::Model as JsonModel;
 
+mod quadifier;
+
 #[derive(Debug)]
 pub struct Model {
-    particle: Identifier,
-    transformation: Display,
-    meshes: Vec<Mesh>,
-
+   pub particle: Identifier,
+   pub transformation: Display,
+   pub meshes: Vec<Mesh>,
 }
 
 #[derive(Debug)]
-struct Mesh {
-    quads: Vec<Quad>,
+pub struct Mesh {
+    pub quads: Vec<Quad>,
 }
 
 #[derive(Debug)]
-struct Quad {
-    texture: Identifier,
-    vertices: [Vertex; 4],
-    normal: Vec3,
-    color_index: i32,
-    cull_face: Option<Direction>,
+pub struct Quad {
+    pub texture: Identifier,
+    pub vertices: [Vertex; 4],
+    pub normal: Vec3,
+    pub color_index: i32,
+    pub cull_face: Option<Direction>,
 }
 
 #[derive(Debug)]
-struct Vertex {
-    xyz: Vec3,
-    uv: Vec2,
+pub struct Vertex {
+    pub xyz: Vec3,
+    pub uv: Vec2,
 }
 
 impl Model {
@@ -38,9 +37,17 @@ impl Model {
         unimplemented!()
     }
 
-    pub fn from_json_model(model: &JsonModel) -> Self {
-        model.textures.get("particle").map(|r|r.)
-        unimplemented!()
+    pub fn from_json_model(model: &JsonModel) -> Result<Self, ()> {
+        if !model.is_fully_resolved() { return Err(()); }
+
+        let tex = model.texture("particle").unwrap_or(Identifier::new("minecraft", "missingno"));
+        let tr = model.display.clone().into();
+        let mesh = quadifier::cubes_to_mesh(model.elements(), &model.textures);
+        Ok(Model {
+            particle: tex,
+            transformation: tr,
+            meshes: vec![mesh],
+        })
     }
 }
 
@@ -49,5 +56,5 @@ impl From<BlockStateDef> for Model {
 }
 
 impl From<JsonModel> for Model {
-    fn from(model: JsonModel) -> Self { Model::from_json_model(&model) }
+    fn from(model: JsonModel) -> Self { Model::from_json_model(&model).unwrap() }
 }
