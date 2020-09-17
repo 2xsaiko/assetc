@@ -107,7 +107,7 @@ fn write_f32_fixed_u16<T: Write>(mut target: T, f: f32, min: f32, max: f32) -> i
 }
 
 fn write_identifier<T: Write>(mut target: T, identifier: &Identifier) -> io::Result<()> {
-    assert!(identifier.namespace.len() <= u16::MAX as usize);
+    assert!(identifier.namespace.len() < u16::MAX as usize);
     assert!(identifier.path.len() <= u16::MAX as usize);
     let namespace_len = if identifier.namespace == "minecraft" { u16::MAX } else { identifier.namespace.len() as u16 };
     target.write_u16::<LittleEndian>(namespace_len)?;
