@@ -8,7 +8,7 @@ use crate::ident::Identifier;
 use crate::model::Model;
 use crate::types::{DisplayTransformation, Vec2, Vec3};
 
-const VERSION: u16 = 1;
+const VERSION: u16 = 3;
 
 pub fn write<T: Write>(model: &Model, mut target: T) -> io::Result<()> {
     // file header
@@ -32,6 +32,8 @@ pub fn write<T: Write>(model: &Model, mut target: T) -> io::Result<()> {
         write_identifier(&mut target, x)?;
     }
 
+    target.write_u16::<LittleEndian>(identifiers.binary_search(&&model.particle).unwrap() as u16)?;
+
     // write transformations
     write_transformation(&mut target, &model.transformation.thirdperson_righthand)?;
     write_transformation(&mut target, &model.transformation.thirdperson_lefthand)?;
@@ -51,10 +53,10 @@ pub fn write<T: Write>(model: &Model, mut target: T) -> io::Result<()> {
         for quad in mesh.quads.iter() {
             target.write_u16::<LittleEndian>(identifiers.binary_search(&&quad.texture).unwrap() as u16)?;
             for x in quad.vertices.iter() {
-                write_vec3(&mut target, x.xyz)?;
-                write_vec2(&mut target, x.uv)?;
+                write_vec3_fixed_u16(&mut target, x.xyz, -1.5, 2.5)?;
+                write_vec2_fixed_u16(&mut target, x.uv, -0.5, 1.5)?;
             }
-            write_vec3(&mut target, quad.normal)?;
+            write_vec3_fixed_u16(&mut target, quad.normal, -1.0, 1.0)?;
             target.write_i32::<LittleEndian>(quad.color_index)?;
             target.write_u8(quad.cull_face.map(|d| d.index() as u8).unwrap_or(0xFF))?;
         }
@@ -80,6 +82,27 @@ fn write_vec3<T: Write>(mut target: T, vec: Vec3) -> io::Result<()> {
 fn write_vec2<T: Write>(mut target: T, vec: Vec2) -> io::Result<()> {
     target.write_f32::<LittleEndian>(vec[0])?;
     target.write_f32::<LittleEndian>(vec[1])?;
+    Ok(())
+}
+
+fn write_vec3_fixed_u16<T: Write>(mut target: T, vec: Vec3, min: f32, max: f32) -> io::Result<()> {
+    write_f32_fixed_u16(&mut target, vec[0], min, max)?;
+    write_f32_fixed_u16(&mut target, vec[1], min, max)?;
+    write_f32_fixed_u16(&mut target, vec[2], min, max)?;
+    Ok(())
+}
+
+fn write_vec2_fixed_u16<T: Write>(mut target: T, vec: Vec2, min: f32, max: f32) -> io::Result<()> {
+    write_f32_fixed_u16(&mut target, vec[0], min, max)?;
+    write_f32_fixed_u16(&mut target, vec[1], min, max)?;
+    Ok(())
+}
+
+fn write_f32_fixed_u16<T: Write>(mut target: T, f: f32, min: f32, max: f32) -> io::Result<()> {
+    assert!(f >= min);
+    assert!(f <= max);
+    let v = ((f - min) / (max - min) * u16::MAX as f32).round() as u16;
+    target.write_u16::<LittleEndian>(v)?;
     Ok(())
 }
 

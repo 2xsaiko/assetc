@@ -18,15 +18,15 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn merge(mut self, mut parent: Model) -> Model {
+    pub fn merge(&mut self, mut parent: Model) {
         self.parent = parent.parent;
         self.ambientocclusion = self.ambientocclusion.or(parent.ambientocclusion);
-        self.display = self.display.merge(parent.display);
-        parent.textures.extend(self.textures);
+        self.display.merge(parent.display);
+        parent.textures.extend(self.textures.drain());
         self.textures = parent.textures;
-        self.elements = self.elements.or(parent.elements);
-
-        self
+        if self.elements.is_none() {
+            self.elements = parent.elements;
+        }
     }
 
     pub fn ambientocclusion(&self) -> bool { self.ambientocclusion.unwrap_or(true) }
@@ -47,11 +47,16 @@ pub enum TextureRef {
 }
 
 impl TextureRef {
-    pub fn resolve(self, map: &HashMap<String, TextureRef>) -> TextureRef {
-        match self {
-            x @ TextureRef::Literal(_) => x,
-            TextureRef::Reference(target) => map.get(&target).map(|r| r.clone()).unwrap_or(TextureRef::Reference(target)),
+    pub fn resolve(mut self, map: &HashMap<String, TextureRef>) -> TextureRef {
+        while let TextureRef::Reference(target) = &self {
+            if let Some(new_t) = map.get(&*target) {
+                self = new_t.clone();
+            } else {
+                break;
+            }
         }
+
+        self
     }
 
     pub fn literal(self) -> Option<Identifier> {
@@ -101,8 +106,8 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn merge(self, parent: Display) -> Display {
-        Display {
+    pub fn merge(&mut self, parent: Display) {
+        *self = Display {
             thirdperson_righthand: self.thirdperson_righthand.or(parent.thirdperson_righthand),
             thirdperson_lefthand: self.thirdperson_lefthand.or(parent.thirdperson_lefthand),
             firstperson_righthand: self.firstperson_righthand.or(parent.firstperson_righthand),
@@ -111,12 +116,17 @@ impl Display {
             head: self.head.or(parent.head),
             ground: self.ground.or(parent.ground),
             fixed: self.fixed.or(parent.fixed),
-        }
+        };
     }
 }
 
 impl From<Display> for crate::types::Display {
     fn from(d: Display) -> Self {
+        fn adjust_pos(mut tr: DisplayTransformation) -> DisplayTransformation {
+            tr.translation = [tr.translation[0] / 16.0, tr.translation[1] / 16.0, tr.translation[2] / 16.0];
+            tr
+        }
+
         // TODO apply transformations for left hand
         let thirdperson_righthand = d.thirdperson_righthand.unwrap_or_default();
         let thirdperson_lefthand = d.thirdperson_lefthand.unwrap_or(thirdperson_righthand);
@@ -124,14 +134,14 @@ impl From<Display> for crate::types::Display {
         let firstperson_lefthand = d.firstperson_lefthand.unwrap_or(firstperson_righthand);
 
         crate::types::Display {
-            thirdperson_righthand,
-            thirdperson_lefthand,
-            firstperson_righthand,
-            firstperson_lefthand,
-            gui: d.gui.unwrap_or_default(),
-            head: d.head.unwrap_or_default(),
-            ground: d.ground.unwrap_or_default(),
-            fixed: d.fixed.unwrap_or_default(),
+            thirdperson_righthand: adjust_pos(thirdperson_righthand),
+            thirdperson_lefthand: adjust_pos(thirdperson_lefthand),
+            firstperson_righthand: adjust_pos(firstperson_righthand),
+            firstperson_lefthand: adjust_pos(firstperson_lefthand),
+            gui: adjust_pos(d.gui.unwrap_or_default()),
+            head: adjust_pos(d.head.unwrap_or_default()),
+            ground: adjust_pos(d.ground.unwrap_or_default()),
+            fixed: adjust_pos(d.fixed.unwrap_or_default()),
         }
     }
 }
@@ -193,7 +203,7 @@ impl<'a> Iterator for FaceIter<'a> {
             self.next_dir = if d == Direction::East { None } else { Some(d.cycle()) };
 
             match self.inner.get_face(d) {
-                None => {},
+                None => {}
                 Some(f) => return Some((d, f)),
             }
         }

@@ -24,10 +24,10 @@ impl Direction {
         match self {
             Direction::Down => [0.0, -1.0, 0.0],
             Direction::Up => [0.0, 1.0, 0.0],
-            Direction::North => [-1.0, 0.0, 0.0],
-            Direction::South => [1.0, 0.0, 0.0],
-            Direction::West => [0.0, 0.0, -1.0],
-            Direction::East => [0.0, 0.0, 1.0],
+            Direction::North => [0.0, 0.0, -1.0],
+            Direction::South => [0.0, 0.0, 1.0],
+            Direction::West => [-1.0, 0.0, 0.0],
+            Direction::East => [1.0, 0.0, 0.0],
         }
     }
 

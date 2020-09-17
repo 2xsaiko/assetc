@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -5,7 +6,6 @@ use std::path::{Path, PathBuf};
 use clap::{app_from_crate, Arg};
 
 use crate::ident::Identifier;
-use std::borrow::Cow;
 
 mod ident;
 mod types;
@@ -34,44 +34,35 @@ fn main() {
     let output = output.map(Cow::Borrowed).unwrap_or_else(|| file.file_name().map_or_else(|| "a.bin".into(), |s| Path::new(s).with_extension("bin")).into());
 
     let mut file = File::open(file).expect("Failed to open input file");
+
     let mut model = match typ {
         "auto" => {
-            let model: vanilla::model::Model = serde_json::from_reader(&mut file).unwrap();
+            let model = serde_json::from_reader(&mut file);
 
-            // TODO parse blockstate
-            // file.seek(SeekFrom::Start(0)).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            let blockstate = serde_json::from_reader(&mut file);
 
-            model
+            match (model, blockstate) {
+                (Ok(_), Ok(_)) => panic!("Ambiguous input file, specify --type"),
+                (Err(_), Err(_)) => panic!("Failed to parse input file"),
+                (Ok(m), _) => AnyModel::Model(m),
+                (_, Ok(bs)) => AnyModel::BlockState(bs),
+            }
         }
         "blockstate" => {
-            unimplemented!()
+            let blockstate = serde_json::from_reader(&mut file).unwrap();
+            AnyModel::BlockState(blockstate)
         }
         "model" => {
-            let model: vanilla::model::Model = serde_json::from_reader(file).expect("Failed to parse model");
-            model
+            let model = serde_json::from_reader(file).expect("Failed to parse model");
+            AnyModel::Model(model)
         }
         _ => unreachable!()
     };
 
-    while let Some(parent_id) = &model.parent {
-        let model_path = identifier_to_model_path(parent_id);
-        let mut parent = None;
-        for &root in include.iter() {
-            let model_path = root.join(&model_path);
-            if let Ok(file) = File::open(model_path) {
-                parent = Some(serde_json::from_reader(file).expect("Failed to parse parent model"));
-                break;
-            }
-        }
-        match parent {
-            None => panic!("Could not find referenced parent model {}", parent_id),
-            Some(m) => {
-                model = model.merge(m);
-            }
-        }
-    }
+    model.resolve(&include);
 
-    let model = model::Model::from_json_model(&model).unwrap();
+    let model = model.to_model();
 
     writer::write(&model, &mut File::create(output).unwrap()).unwrap();
 }
@@ -80,4 +71,43 @@ fn identifier_to_model_path(id: &Identifier) -> PathBuf {
     let mut string = id.path.to_string();
     string.push_str(".json");
     Path::new(&id.namespace).join("models").join(string)
+}
+
+enum AnyModel {
+    Model(vanilla::model::Model),
+    BlockState(vanilla::blockstate::BlockStateDef),
+}
+
+impl AnyModel {
+    pub fn resolve(&mut self, include: &[&Path]) {
+        match self {
+            AnyModel::Model(model) => {
+                while let Some(parent_id) = &model.parent {
+                    let model_path = identifier_to_model_path(parent_id);
+                    let mut parent = None;
+                    for &root in include.iter() {
+                        let model_path = root.join(&model_path);
+                        if let Ok(file) = File::open(model_path) {
+                            parent = Some(serde_json::from_reader(file).expect("Failed to parse parent model"));
+                            break;
+                        }
+                    }
+                    match parent {
+                        None => panic!("Could not find referenced parent model {}", parent_id),
+                        Some(m) => {
+                            model.merge(m);
+                        }
+                    }
+                }
+            },
+            AnyModel::BlockState(state) => unimplemented!(),
+        }
+    }
+
+    pub fn to_model(&self) -> model::Model {
+        match self {
+            AnyModel::Model(model) => model::Model::from_json_model(&model).unwrap(),
+            AnyModel::BlockState(state) => unimplemented!(),
+        }
+    }
 }
